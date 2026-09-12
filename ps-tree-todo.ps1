@@ -375,6 +375,7 @@ function New-TaskForm {
     $form.MinimumSize = [System.Drawing.Size]::new(500, 350)
     $form.FormBorderStyle = 'FixedSingle'
     $form.MaximizeBox = $false
+    $form.KeyPreview = $true
 
     $treeView = [System.Windows.Forms.TreeView]::new()
     $treeView.Dock = 'Fill'
@@ -395,39 +396,96 @@ function New-TaskForm {
     $buttonPanel.WrapContents = $false
 
     $btnAdd = [System.Windows.Forms.Button]::new()
-    $btnAdd.Text = '追加'
+    $btnAdd.Text = '追加 (&A)'
     $btnAdd.AutoSize = $true
     $btnAdd.Add_Click({ Add-TodoItemAtSelection })
 
     $btnChildAdd = [System.Windows.Forms.Button]::new()
-    $btnChildAdd.Text = '子追加'
+    $btnChildAdd.Text = '子追加 (&C)'
     $btnChildAdd.AutoSize = $true
     $btnChildAdd.Add_Click({ Add-TodoItemAtSelection -AsChild })
 
     $btnEdit = [System.Windows.Forms.Button]::new()
-    $btnEdit.Text = '編集'
+    $btnEdit.Text = '編集 (&E)'
     $btnEdit.AutoSize = $true
     $btnEdit.Add_Click({ Edit-SelectedTodoTitle })
 
     $btnToggle = [System.Windows.Forms.Button]::new()
-    $btnToggle.Text = '完了切替'
+    $btnToggle.Text = '完了切替 (&T)'
     $btnToggle.AutoSize = $true
     $btnToggle.Add_Click({ Toggle-SelectedTodoState })
 
     $btnDelete = [System.Windows.Forms.Button]::new()
-    $btnDelete.Text = '削除'
+    $btnDelete.Text = '削除 (&D)'
     $btnDelete.AutoSize = $true
     $btnDelete.Add_Click({ Remove-SelectedTodo })
 
     $btnSave = [System.Windows.Forms.Button]::new()
-    $btnSave.Text = '保存'
+    $btnSave.Text = '保存 (&S)'
     $btnSave.AutoSize = $true
     $btnSave.Add_Click({ Save-TodoFile -Path $script:DataFilePath })
 
     $btnReload = [System.Windows.Forms.Button]::new()
-    $btnReload.Text = '再読み込み'
+    $btnReload.Text = '再読み込み (&R)'
     $btnReload.AutoSize = $true
     $btnReload.Add_Click({ Load-TodoFile -Path $script:DataFilePath })
+
+    $toolTip = [System.Windows.Forms.ToolTip]::new()
+    $toolTip.SetToolTip($btnAdd, '追加 (Ctrl+N / Insert)')
+    $toolTip.SetToolTip($btnChildAdd, '子追加 (Ctrl+Shift+N)')
+    $toolTip.SetToolTip($btnEdit, '編集 (F2 / Enter)')
+    $toolTip.SetToolTip($btnToggle, '完了切替 (Space)')
+    $toolTip.SetToolTip($btnDelete, '削除 (Delete)')
+    $toolTip.SetToolTip($btnSave, '保存 (Ctrl+S)')
+    $toolTip.SetToolTip($btnReload, '再読み込み (Ctrl+R / F5)')
+
+    $form.add_KeyDown({
+        param($sender, $e)
+
+        if ($e.Control -and $e.KeyCode -eq [System.Windows.Forms.Keys]::S) {
+            $e.SuppressKeyPress = $true
+            Save-TodoFile -Path $script:DataFilePath
+            return
+        }
+
+        if (($e.Control -and $e.KeyCode -eq [System.Windows.Forms.Keys]::R) -or ($e.KeyCode -eq [System.Windows.Forms.Keys]::F5)) {
+            $e.SuppressKeyPress = $true
+            Load-TodoFile -Path $script:DataFilePath
+            return
+        }
+
+        if (($e.Control -and -not $e.Shift -and $e.KeyCode -eq [System.Windows.Forms.Keys]::N) -or ($e.KeyCode -eq [System.Windows.Forms.Keys]::Insert)) {
+            $e.SuppressKeyPress = $true
+            Add-TodoItemAtSelection
+            return
+        }
+
+        if ($e.Control -and $e.Shift -and $e.KeyCode -eq [System.Windows.Forms.Keys]::N) {
+            $e.SuppressKeyPress = $true
+            Add-TodoItemAtSelection -AsChild
+            return
+        }
+
+        if ($null -ne $script:TreeView.SelectedNode) {
+            if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Space -and -not $e.Control -and -not $e.Alt) {
+                $e.SuppressKeyPress = $true
+                Toggle-SelectedTodoState
+                return
+            }
+
+            if ($e.KeyCode -eq [System.Windows.Forms.Keys]::F2 -or $e.KeyCode -eq [System.Windows.Forms.Keys]::Enter) {
+                $e.SuppressKeyPress = $true
+                Edit-SelectedTodoTitle
+                return
+            }
+
+            if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Delete -and -not $e.Control) {
+                $e.SuppressKeyPress = $true
+                Remove-SelectedTodo
+                return
+            }
+        }
+    })
 
     foreach ($button in @($btnAdd, $btnChildAdd, $btnEdit, $btnToggle, $btnDelete, $btnSave, $btnReload)) {
         [void]$buttonPanel.Controls.Add($button)
