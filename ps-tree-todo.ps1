@@ -39,33 +39,8 @@ function Get-StartupShortcutPath {
     return Join-Path ([Environment]::GetFolderPath('Startup')) 'ps-tree-todo.lnk'
 }
 
-function Test-StartupRegistration {
-    return Test-Path -LiteralPath (Get-StartupShortcutPath)
-}
-
-function Set-StartupRegistration {
-    param(
-        [bool]$Enabled
-    )
-
-    $shortcutPath = Get-StartupShortcutPath
-    if (-not $Enabled) {
-        if (Test-Path -LiteralPath $shortcutPath) {
-            Remove-Item -LiteralPath $shortcutPath -Force
-        }
-        return
-    }
-
-    $shell = New-Object -ComObject WScript.Shell
-    $shortcut = $shell.CreateShortcut($shortcutPath)
-    $shortcut.TargetPath = (Get-Process -Id $PID).Path
-    $shortcut.Arguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$($script:ScriptPath)`" -StartMinimized"
-    $shortcut.WorkingDirectory = $script:ScriptDirectory
-    $shortcut.Description = 'ps-tree-todo'
-    $shortcut.IconLocation = "$($script:ScriptPath),0"
-    $shortcut.Save()
-    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shortcut) | Out-Null
-    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
+function Open-StartupFolder {
+    Start-Process -FilePath (Get-StartupShortcutPath)
 }
 
 function New-TodoItem {
@@ -593,12 +568,8 @@ function New-TaskForm {
         $form.Activate()
     })
 
-    $startupMenuItem = [System.Windows.Forms.ToolStripMenuItem]::new('Windows起動時に起動')
-    $startupMenuItem.Checked = Test-StartupRegistration
-    $startupMenuItem.Add_Click({
-        Set-StartupRegistration -Enabled (-not (Test-StartupRegistration))
-        $startupMenuItem.Checked = Test-StartupRegistration
-    })
+    $startupMenuItem = [System.Windows.Forms.ToolStripMenuItem]::new('スタートアップフォルダーを開く')
+    $startupMenuItem.Add_Click({ Open-StartupFolder })
 
     $exitMenuItem = [System.Windows.Forms.ToolStripMenuItem]::new('終了')
     $exitMenuItem.Add_Click({
