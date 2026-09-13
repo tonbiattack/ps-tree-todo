@@ -1,8 +1,72 @@
+[CmdletBinding()]
+param(
+    [switch]$StartMinimized
+)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName Microsoft.VisualBasic
+
+$script:ScriptPath = $PSCommandPath
+$script:ScriptDirectory = $PSScriptRoot
+
+function New-ApplicationIcon {
+    $bitmap = [System.Drawing.Bitmap]::new(32, 32)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $graphics.Clear([System.Drawing.Color]::FromArgb(34, 91, 146))
+
+    $pen = [System.Drawing.Pen]::new([System.Drawing.Color]::White, 4)
+    $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+    $pen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
+    $graphics.DrawLines($pen, [System.Drawing.Point[]]@(
+        [System.Drawing.Point]::new(7, 17),
+        [System.Drawing.Point]::new(13, 23),
+        [System.Drawing.Point]::new(26, 9)
+    ))
+
+    $pen.Dispose()
+    $graphics.Dispose()
+    $icon = [System.Drawing.Icon]::FromHandle($bitmap.GetHicon())
+    $script:ApplicationIconBitmap = $bitmap
+    return $icon
+}
+
+function Get-StartupShortcutPath {
+    return Join-Path ([Environment]::GetFolderPath('Startup')) 'ps-tree-todo.lnk'
+}
+
+function Test-StartupRegistration {
+    return Test-Path -LiteralPath (Get-StartupShortcutPath)
+}
+
+function Set-StartupRegistration {
+    param(
+        [bool]$Enabled
+    )
+
+    $shortcutPath = Get-StartupShortcutPath
+    if (-not $Enabled) {
+        if (Test-Path -LiteralPath $shortcutPath) {
+            Remove-Item -LiteralPath $shortcutPath -Force
+        }
+        return
+    }
+
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = (Get-Process -Id $PID).Path
+    $shortcut.Arguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$($script:ScriptPath)`" -StartMinimized"
+    $shortcut.WorkingDirectory = $script:ScriptDirectory
+    $shortcut.Description = 'ps-tree-todo'
+    $shortcut.IconLocation = "$($script:ScriptPath),0"
+    $shortcut.Save()
+    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shortcut) | Out-Null
+    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
+}
 
 function New-TodoItem {
     param(
@@ -271,6 +335,7 @@ function Add-TodoItemAtSelection {
     }
 
     Refresh-TreeView -TreeView $script:TreeView
+    Save-TodoFile -Path $script:DataFilePath -Silent
 }
 
 function Edit-SelectedTodoTitle {
@@ -287,6 +352,7 @@ function Edit-SelectedTodoTitle {
 
     $selectedNode.Tag.Title = $newTitle.Trim()
     Update-TreeNodeDisplay -Node $selectedNode
+    Save-TodoFile -Path $script:DataFilePath -Silent
 }
 
 function Toggle-SelectedTodoState {
@@ -297,6 +363,7 @@ function Toggle-SelectedTodoState {
 
     $selectedNode.Tag.Completed = -not $selectedNode.Tag.Completed
     Update-TreeNodeDisplay -Node $selectedNode
+    Save-TodoFile -Path $script:DataFilePath -Silent
 }
 
 function Remove-SelectedTodo {
@@ -326,6 +393,7 @@ function Remove-SelectedTodo {
 
     $script:TreeView.SelectedNode = $null
     Refresh-TreeView -TreeView $script:TreeView
+    Save-TodoFile -Path $script:DataFilePath -Silent
 }
 
 function Load-TodoFile {
@@ -350,7 +418,9 @@ function Load-TodoFile {
 
 function Save-TodoFile {
     param(
-        [string]$Path
+        [string]$Path,
+
+        [switch]$Silent
     )
 
     $directory = Split-Path -Path $Path -Parent
@@ -364,7 +434,9 @@ function Save-TodoFile {
     }
 
     [System.IO.File]::WriteAllText($Path, $content, [System.Text.UTF8Encoding]::new($false))
-    [System.Windows.Forms.MessageBox]::Show('TODOをMarkdownとして保存しました。', '保存完了', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+    if (-not $Silent) {
+        [System.Windows.Forms.MessageBox]::Show('TODOをMarkdownとして保存しました。', '保存完了', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+    }
 }
 
 function New-TaskForm {
@@ -376,7 +448,6 @@ function New-TaskForm {
     $form.FormBorderStyle = 'FixedSingle'
     $form.MaximizeBox = $false
     $form.KeyPreview = $true
-
     $treeView = [System.Windows.Forms.TreeView]::new()
     $treeView.Dock = 'Fill'
     $treeView.FullRowSelect = $true
@@ -512,9 +583,77 @@ function New-TaskForm {
     $script:BtnReload = $btnReload
     $script:TodoRootItems = [System.Collections.ArrayList]::new()
     $script:DataFilePath = Join-Path $PSScriptRoot 'todos.md'
+    $script:ApplicationIcon = New-ApplicationIcon
+    $form.Icon = $script:ApplicationIcon
+
+    $openMenuItem = [System.Windows.Forms.ToolStripMenuItem]::new('ps-tree-todoを開く')
+    $openMenuItem.Add_Click({
+        $form.Show()
+        $form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+        $form.Activate()
+    })
+
+    $startupMenuItem = [System.Windows.Forms.ToolStripMenuItem]::new('Windows起動時に起動')
+    $startupMenuItem.Checked = Test-StartupRegistration
+    $startupMenuItem.Add_Click({
+        Set-StartupRegistration -Enabled (-not (Test-StartupRegistration))
+        $startupMenuItem.Checked = Test-StartupRegistration
+    })
+
+    $exitMenuItem = [System.Windows.Forms.ToolStripMenuItem]::new('終了')
+    $exitMenuItem.Add_Click({
+        Save-TodoFile -Path $script:DataFilePath -Silent
+        $script:AllowExit = $true
+        $form.Close()
+    })
+
+    $contextMenu = [System.Windows.Forms.ContextMenuStrip]::new()
+    [void]$contextMenu.Items.Add($openMenuItem)
+    [void]$contextMenu.Items.Add($startupMenuItem)
+    [void]$contextMenu.Items.Add('-')
+    [void]$contextMenu.Items.Add($exitMenuItem)
+
+    $notifyIcon = [System.Windows.Forms.NotifyIcon]::new()
+    $notifyIcon.Icon = $script:ApplicationIcon
+    $notifyIcon.Text = 'ps-tree-todo'
+    $notifyIcon.ContextMenuStrip = $contextMenu
+    $notifyIcon.Visible = $true
+    $notifyIcon.Add_DoubleClick({
+        $form.Show()
+        $form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+        $form.Activate()
+    })
+
+    $form.add_Resize({
+        if ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) {
+            $form.Hide()
+        }
+    })
+    $form.add_FormClosing({
+        param($sender, $e)
+
+        if (-not $script:AllowExit) {
+            $e.Cancel = $true
+            $form.Hide()
+            return
+        }
+
+        Save-TodoFile -Path $script:DataFilePath -Silent
+        $notifyIcon.Visible = $false
+        $notifyIcon.Dispose()
+        $contextMenu.Dispose()
+        $script:ApplicationIcon.Dispose()
+        $script:ApplicationIconBitmap.Dispose()
+    })
+
+    $script:NotifyIcon = $notifyIcon
+    $script:AllowExit = $false
 
     Load-TodoFile -Path $script:DataFilePath
     Refresh-ButtonState -TreeView $treeView
+    if ($StartMinimized) {
+        $form.add_Shown({ $form.Hide() })
+    }
     return $form
 }
 

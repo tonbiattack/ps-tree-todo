@@ -1,7 +1,1 @@
-- [ ] 個人開発
-  - [ ] シレン6アシスタント
-    - [x] 値段識別
-    - [ ] READMEを書く
-  - [ ] ps-tree-todo
-    - [ ] TreeViewを実装
-    - [ ] Markdown保存を実装
+
