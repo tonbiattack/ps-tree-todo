@@ -35,14 +35,6 @@ function New-ApplicationIcon {
     return $icon
 }
 
-function Get-StartupShortcutPath {
-    return Join-Path ([Environment]::GetFolderPath('Startup')) 'ps-tree-todo.lnk'
-}
-
-function Open-StartupFolder {
-    Start-Process -FilePath (Get-StartupShortcutPath)
-}
-
 function New-TodoItem {
     param(
         [Parameter(Mandatory = $true)]
@@ -568,9 +560,6 @@ function New-TaskForm {
         $form.Activate()
     })
 
-    $startupMenuItem = [System.Windows.Forms.ToolStripMenuItem]::new('スタートアップフォルダーを開く')
-    $startupMenuItem.Add_Click({ Open-StartupFolder })
-
     $exitMenuItem = [System.Windows.Forms.ToolStripMenuItem]::new('終了')
     $exitMenuItem.Add_Click({
         Save-TodoFile -Path $script:DataFilePath -Silent
@@ -580,7 +569,6 @@ function New-TaskForm {
 
     $contextMenu = [System.Windows.Forms.ContextMenuStrip]::new()
     [void]$contextMenu.Items.Add($openMenuItem)
-    [void]$contextMenu.Items.Add($startupMenuItem)
     [void]$contextMenu.Items.Add('-')
     [void]$contextMenu.Items.Add($exitMenuItem)
 
