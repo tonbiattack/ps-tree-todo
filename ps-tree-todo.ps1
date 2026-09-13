@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [switch]$StartMinimized
 )
@@ -6,6 +6,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Windows PowerShell 5.1 でも日本語を正しく解析できるよう、このソースは UTF-8 BOM 付きで保存する。
+# WinForms を使うため、Windows PowerShell 5.1 と PowerShell 7 の両方で
+# 読み込める .NET アセンブリを明示的に読み込む。
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName Microsoft.VisualBasic
@@ -14,6 +17,7 @@ $script:ScriptPath = $PSCommandPath
 $script:ScriptDirectory = $PSScriptRoot
 
 function New-ApplicationIcon {
+    # 通知領域でも識別できるよう、外部ファイルには依存しない小さなチェック印を描画する。
     $bitmap = [System.Drawing.Bitmap]::new(32, 32)
     $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
     $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
@@ -43,6 +47,8 @@ function New-TodoItem {
         [bool]$Completed = $false
     )
 
+    # Children を常に ArrayList にしておくと、読み込み直後と GUI から追加した直後で
+    # 子要素を扱う処理を分けずに済む。
     return [pscustomobject]@{
         Title = $Title.Trim()
         Completed = $Completed
@@ -63,6 +69,8 @@ function ConvertFrom-TodoMarkdown {
         return
     }
 
+    # インデントの深さごとに直近の親を stack に保持する。
+    # これにより Markdown を上から一度走査するだけで親子関係を復元できる。
     foreach ($line in ($Markdown -split "`r?`n")) {
         if ([string]::IsNullOrWhiteSpace($line)) {
             continue
@@ -72,6 +80,7 @@ function ConvertFrom-TodoMarkdown {
             continue
         }
 
+        # 保存形式は 2 スペースを 1 階層として扱う。形式外の行は上の正規表現で無視する。
         $indentLevel = [int](($line.Length - $line.TrimStart().Length) / 2)
         $state = $Matches['state']
         $title = $Matches['title'].Trim()
@@ -82,6 +91,7 @@ function ConvertFrom-TodoMarkdown {
 
         $item = New-TodoItem -Title $title -Completed ($state -match '[xX]')
 
+        # 同じ階層または浅い階層に戻ったら、不要になった親候補を取り除く。
         while ($stack.Count -gt $indentLevel) {
             $stack.RemoveAt($stack.Count - 1)
         }
@@ -111,6 +121,7 @@ function Write-TodoMarkdownItems {
 
     $lines = [System.Collections.Generic.List[string]]::new()
 
+    # 子要素を先にではなく親の直後に出力し、Markdown のツリー構造を保つ。
     foreach ($item in $Items) {
         $prefix = ('  ' * $Depth)
         $check = if ($item.Completed) { '[x]' } else { '[ ]' }
@@ -152,6 +163,7 @@ function Get-ParentTodoItem {
         [object]$Target
     )
 
+    # 親検索は削除と兄弟ノードへの追加で共通利用する深さ優先探索。
     foreach ($item in $Items) {
         if ($item -eq $Target) {
             return $null
@@ -193,6 +205,8 @@ function Populate-TreeNodeCollectionFromTodoItems {
         [System.Windows.Forms.TreeNodeCollection]$Collection
     )
 
+    # TreeNode.Tag に元の TODO オブジェクトを持たせることで、選択イベントから
+    # 表示文字列を逆解析せずにデータを直接更新できる。
     foreach ($todoItem in $TodoItems) {
         $node = [System.Windows.Forms.TreeNode]::new()
         $node.Tag = $todoItem
@@ -239,6 +253,7 @@ function Refresh-TreeView {
         [System.Windows.Forms.TreeView]$TreeView
     )
 
+    # 再構築中のちらつきと中間状態の描画を抑える。
     $TreeView.BeginUpdate()
     $TreeView.Nodes.Clear()
     Populate-TreeNodeCollectionFromTodoItems -TodoItems @($script:TodoRootItems) -Collection $TreeView.Nodes
@@ -252,6 +267,7 @@ function Refresh-ButtonState {
         [System.Windows.Forms.TreeView]$TreeView
     )
 
+    # 選択対象がない操作は無効にし、Tag がない状態での更新を防ぐ。
     $hasSelection = $null -ne $TreeView.SelectedNode
     $script:BtnEdit.Enabled = $hasSelection
     $script:BtnToggle.Enabled = $hasSelection
@@ -272,6 +288,7 @@ function Add-TodoItemAtSelection {
 
     $newItem = New-TodoItem -Title $title
 
+    # 未選択ならルートへ、子追加なら選択項目の配下へ、通常追加なら選択項目の次へ置く。
     if ($null -eq $selectedNode) {
         [void]$script:TodoRootItems.Add($newItem)
     }
@@ -301,6 +318,8 @@ function Add-TodoItemAtSelection {
         }
     }
 
+    # UI と Markdown を同じ操作単位で更新する。保存失敗時は ErrorActionPreference により
+    # 失敗を隠さず呼び出し元へ伝える。
     Refresh-TreeView -TreeView $script:TreeView
     Save-TodoFile -Path $script:DataFilePath -Silent
 }
@@ -339,6 +358,7 @@ function Remove-SelectedTodo {
         return
     }
 
+    # 子タスクを含む削除は復元できないため、データ変更前に必ず確認する。
     $dialogResult = [System.Windows.Forms.MessageBox]::Show(
         '選択中のタスクを削除しますか？`n配下のタスクもまとめて削除されます。',
         'タスク削除',
@@ -368,11 +388,13 @@ function Load-TodoFile {
         [string]$Path
     )
 
+    # 初回起動など保存ファイルがない場合は、空のツリーとして正常に開始する。
     if (-not (Test-Path -LiteralPath $Path)) {
         $script:TodoRootItems = [System.Collections.ArrayList]::new()
         return
     }
 
+    # Get-Content は BOM の有無を判定して読み込む。保存側は UTF-8 BOM なしに統一している。
     $markdown = Get-Content -LiteralPath $Path -Raw
     $script:TodoRootItems = [System.Collections.ArrayList]::new()
     $null = ConvertFrom-TodoMarkdown -Markdown $markdown
@@ -400,6 +422,8 @@ function Save-TodoFile {
         $content += [Environment]::NewLine
     }
 
+    # BOM なし UTF-8 を明示する。Windows PowerShell の既定エンコーディングに依存すると
+    # 環境により Markdown の日本語が文字化けするためである。
     [System.IO.File]::WriteAllText($Path, $content, [System.Text.UTF8Encoding]::new($false))
     if (-not $Silent) {
         [System.Windows.Forms.MessageBox]::Show('TODOをMarkdownとして保存しました。', '保存完了', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
@@ -407,6 +431,7 @@ function Save-TodoFile {
 }
 
 function New-TaskForm {
+    # 画面部品とイベントを一箇所で組み立て、作成後にフォームだけを呼び出し元へ返す。
     $form = [System.Windows.Forms.Form]::new()
     $form.Text = 'ps-tree-todo'
     $form.Size = [System.Drawing.Size]::new(700, 500)
@@ -477,6 +502,8 @@ function New-TaskForm {
     $toolTip.SetToolTip($btnSave, '保存 (Ctrl+S)')
     $toolTip.SetToolTip($btnReload, '再読み込み (Ctrl+R / F5)')
 
+    # ボタンのクリックと同じ操作関数をショートカットからも呼び、操作経路による
+    # 保存・表示更新の差異を作らない。
     $form.add_KeyDown({
         param($sender, $e)
 
@@ -553,6 +580,7 @@ function New-TaskForm {
     $script:ApplicationIcon = New-ApplicationIcon
     $form.Icon = $script:ApplicationIcon
 
+    # 閉じる操作は常駐を維持し、明示的なメニュー操作だけをプロセス終了にする。
     $openMenuItem = [System.Windows.Forms.ToolStripMenuItem]::new('ps-tree-todoを開く')
     $openMenuItem.Add_Click({
         $form.Show()
@@ -583,6 +611,7 @@ function New-TaskForm {
         $form.Activate()
     })
 
+    # 最小化はフォームを隠すだけなので、通知領域アイコンからいつでも復帰できる。
     $form.add_Resize({
         if ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) {
             $form.Hide()
@@ -597,6 +626,7 @@ function New-TaskForm {
             return
         }
 
+        # 終了時も保存してから、通知領域などの unmanaged リソースを明示的に破棄する。
         Save-TodoFile -Path $script:DataFilePath -Silent
         $notifyIcon.Visible = $false
         $notifyIcon.Dispose()
@@ -617,6 +647,7 @@ function New-TaskForm {
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
+    # ドットソース時はフォームを起動しないため、関数だけを検証・再利用できる。
     [System.Windows.Forms.Application]::EnableVisualStyles()
     [System.Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
     $form = New-TaskForm
